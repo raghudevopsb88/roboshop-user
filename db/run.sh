@@ -8,7 +8,8 @@ if [ -f /data/params ]; then
     set +a
 fi
 
-MONGO_CONN="${MONGO_URL:-mongodb://mongodb:27017/users}"
-echo "Seeding MongoDB at ${MONGO_CONN}..."
-mongosh "$MONGO_CONN" --file /db/master-data.js
+: "${MONGO_URL:?MONGO_URL is required}"
+
+echo "Seeding MongoDB at ${MONGO_URL}..."
+mongosh "$MONGO_URL" --file /db/master-data.js
 echo "User database setup complete"

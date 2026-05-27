@@ -8,8 +8,12 @@ if [ -f /data/params ]; then
     set +a
 fi
 
-export MONGO_URL="${MONGO_URL:-mongodb://mongodb:27017/users}"
-export JWT_SECRET="${JWT_SECRET:-roboshop-secret-key}"
-export PORT="${USER_SERVER_PORT:-8080}"
+: "${MONGO_URL:?MONGO_URL is required}"
+: "${JWT_SECRET:?JWT_SECRET is required}"
+: "${USER_SERVER_PORT:?USER_SERVER_PORT is required}"
+
+export MONGO_URL
+export JWT_SECRET
+export PORT="${USER_SERVER_PORT}"
 
 exec node server.js
