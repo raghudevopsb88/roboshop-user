@@ -18,7 +18,10 @@ async function connectDB() {
     const maxRetries = 30;
     for (let i = 0; i < maxRetries; i++) {
         try {
-            const client = await MongoClient.connect(MONGO_URL);
+            const client = await MongoClient.connect(MONGO_URL, {
+                maxPoolSize: 50,
+                minPoolSize: 5,
+            });
             db = client.db();
             console.log('Connected to MongoDB');
             return;
@@ -29,6 +32,14 @@ async function connectDB() {
     }
     throw new Error('Failed to connect to MongoDB');
 }
+
+app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+        console.log(`${req.method} ${req.path} ${res.statusCode} ${Date.now() - start}ms`);
+    });
+    next();
+});
 
 // Health check
 app.get('/health', (req, res) => {
@@ -44,6 +55,7 @@ app.post('/register', async (req, res) => {
             $or: [{ username }, { email }]
         });
         if (existing) {
+            console.log(`Registration rejected: username or email already exists (${username})`);
             return res.status(400).json({ error: 'Username or email already exists' });
         }
 
@@ -74,6 +86,7 @@ app.post('/login', async (req, res) => {
         const user = await db.collection('users').findOne({ username });
 
         if (!user || !(await bcrypt.compare(password, user.password))) {
+            console.log(`Login failed: invalid credentials (${username})`);
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
@@ -87,7 +100,7 @@ app.post('/login', async (req, res) => {
         res.json({
             token,
             user: {
-                id: user._id,
+                id: user._id.toString(),
                 username: user.username,
                 email: user.email,
                 firstName: user.firstName,
@@ -104,7 +117,10 @@ app.post('/login', async (req, res) => {
 app.get('/profile', async (req, res) => {
     try {
         const token = req.headers.authorization?.replace('Bearer ', '');
-        if (!token) return res.status(401).json({ error: 'No token provided' });
+        if (!token) {
+            console.log('Profile denied: missing token');
+            return res.status(401).json({ error: 'No token provided' });
+        }
 
         const decoded = jwt.verify(token, JWT_SECRET);
         const user = await db.collection('users').findOne(
@@ -112,9 +128,13 @@ app.get('/profile', async (req, res) => {
             { projection: { password: 0 } }
         );
 
-        if (!user) return res.status(404).json({ error: 'User not found' });
+        if (!user) {
+            console.log(`Profile denied: user not found (${decoded.userId})`);
+            return res.status(404).json({ error: 'User not found' });
+        }
         res.json(user);
     } catch (err) {
+        console.log(`Profile denied: invalid token (${err.message})`);
         res.status(401).json({ error: 'Invalid token' });
     }
 });
@@ -126,9 +146,13 @@ app.get('/validate/:userId', async (req, res) => {
             { _id: new ObjectId(req.params.userId) },
             { projection: { password: 0 } }
         );
-        if (!user) return res.status(404).json({ error: 'User not found' });
+        if (!user) {
+            console.log(`Validate failed: user not found (${req.params.userId})`);
+            return res.status(404).json({ error: 'User not found' });
+        }
         res.json(user);
     } catch (err) {
+        console.error(`Validate error: ${err.message}`);
         res.status(500).json({ error: 'Validation failed' });
     }
 });
