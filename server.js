@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { MongoClient, ObjectId } = require('mongodb');
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
 const app = express();
@@ -11,6 +11,7 @@ app.use(express.json());
 const MONGO_URL = process.env.MONGO_URL || 'mongodb://mongodb:27017/users';
 const JWT_SECRET = process.env.JWT_SECRET || 'roboshop-secret-key';
 const PORT = process.env.PORT || 8001;
+const BCRYPT_ROUNDS = 8;
 
 let db;
 
@@ -24,7 +25,7 @@ async function connectDB() {
             });
             db = client.db();
             console.log('Connected to MongoDB');
-            return;
+            return client;
         } catch (err) {
             console.log(`MongoDB connection attempt ${i + 1}/${maxRetries} failed, retrying in 2s...`);
             await new Promise(resolve => setTimeout(resolve, 2000));
@@ -35,21 +36,21 @@ async function connectDB() {
 
 app.use((req, res, next) => {
     const start = Date.now();
+    console.log(`>> ${req.method} ${req.path}`);
     res.on('finish', () => {
-        console.log(`${req.method} ${req.path} ${res.statusCode} ${Date.now() - start}ms`);
+        console.log(`<< ${req.method} ${req.path} ${res.statusCode} ${Date.now() - start}ms`);
     });
     next();
 });
 
-// Health check
 app.get('/health', (req, res) => {
     res.json({ status: 'OK', service: 'user' });
 });
 
-// Register
 app.post('/register', async (req, res) => {
+    const { username } = req.body || {};
     try {
-        const { username, email, password, firstName, lastName, phone } = req.body;
+        const { email, password, firstName, lastName, phone } = req.body;
 
         const existing = await db.collection('users').findOne({
             $or: [{ username }, { email }]
@@ -59,7 +60,7 @@ app.post('/register', async (req, res) => {
             return res.status(400).json({ error: 'Username or email already exists' });
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
+        const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
         const user = {
             username,
             email,
@@ -72,20 +73,26 @@ app.post('/register', async (req, res) => {
 
         const result = await db.collection('users').insertOne(user);
         console.log(`User registered: ${username}`);
-        res.status(201).json({ id: result.insertedId, username, email });
+        res.status(201).json({ id: result.insertedId.toString(), username, email });
     } catch (err) {
-        console.error('Registration error:', err.message);
+        console.error(`Registration error (${username}):`, err.message);
         res.status(500).json({ error: 'Registration failed' });
     }
 });
 
-// Login
 app.post('/login', async (req, res) => {
+    const { username } = req.body || {};
     try {
-        const { username, password } = req.body;
+        const { password } = req.body;
         const user = await db.collection('users').findOne({ username });
 
-        if (!user || !(await bcrypt.compare(password, user.password))) {
+        if (!user) {
+            console.log(`Login failed: user not found (${username})`);
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        const valid = await bcrypt.compare(password, user.password);
+        if (!valid) {
             console.log(`Login failed: invalid credentials (${username})`);
             return res.status(401).json({ error: 'Invalid credentials' });
         }
@@ -108,12 +115,11 @@ app.post('/login', async (req, res) => {
             }
         });
     } catch (err) {
-        console.error('Login error:', err.message);
+        console.error(`Login error (${username}):`, err.message);
         res.status(500).json({ error: 'Login failed' });
     }
 });
 
-// Get profile (requires JWT)
 app.get('/profile', async (req, res) => {
     try {
         const token = req.headers.authorization?.replace('Bearer ', '');
@@ -139,7 +145,6 @@ app.get('/profile', async (req, res) => {
     }
 });
 
-// Validate user (internal service call)
 app.get('/validate/:userId', async (req, res) => {
     try {
         const user = await db.collection('users').findOne(

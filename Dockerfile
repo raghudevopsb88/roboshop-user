@@ -1,4 +1,7 @@
-FROM docker.io/library/node:20 AS builder
+FROM docker.io/redhat/ubi9:latest AS builder
+RUN curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - \
+    && dnf install -y nodejs python3 make gcc-c++ \
+    && dnf clean all
 WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev
